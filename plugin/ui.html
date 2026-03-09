@@ -1,0 +1,134 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <title>Text Pusher</title>
+    <style>
+      * { box-sizing: border-box; margin: 0; padding: 0; }
+      body {
+        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+        font-size: 12px;
+        background: #1e1e1e;
+        color: #e0e0e0;
+        padding: 12px;
+        min-height: 80px;
+      }
+      .status {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        padding: 8px 10px;
+        border-radius: 6px;
+        background: #2a2a2a;
+        border: 1px solid #333;
+      }
+      .dot {
+        width: 8px;
+        height: 8px;
+        border-radius: 50%;
+        background: #555;
+        flex-shrink: 0;
+        transition: background 0.3s;
+      }
+      .dot.connected { background: #4caf50; }
+      .dot.connecting { background: #ff9800; animation: pulse 1s infinite; }
+      .dot.error { background: #f44336; }
+      .label { flex: 1; }
+      .log {
+        margin-top: 8px;
+        padding: 6px 8px;
+        background: #111;
+        border-radius: 4px;
+        max-height: 120px;
+        overflow-y: auto;
+        font-family: monospace;
+        font-size: 10px;
+        color: #888;
+        display: none;
+      }
+      .log.visible { display: block; }
+      .log-entry { margin-bottom: 2px; }
+      .log-entry.ok { color: #4caf50; }
+      .log-entry.err { color: #f44336; }
+      @keyframes pulse {
+        0%, 100% { opacity: 1; }
+        50% { opacity: 0.4; }
+      }
+    </style>
+  </head>
+  <body>
+    <div class="status">
+      <div class="dot connecting" id="dot"></div>
+      <span class="label" id="label">Connecting…</span>
+    </div>
+    <div class="log" id="log"></div>
+
+    <script>
+      const dot = document.getElementById('dot');
+      const label = document.getElementById('label');
+      const logEl = document.getElementById('log');
+      const WS_URL = 'ws://localhost:1994/ws';
+      let ws = null;
+      let reconnectTimer = null;
+
+      function addLog(text, type = '') {
+        logEl.classList.add('visible');
+        const el = document.createElement('div');
+        el.className = 'log-entry ' + type;
+        el.textContent = new Date().toLocaleTimeString() + ' ' + text;
+        logEl.insertBefore(el, logEl.firstChild);
+        // keep last 50 entries
+        while (logEl.children.length > 50) logEl.removeChild(logEl.lastChild);
+      }
+
+      function setStatus(state, text) {
+        dot.className = 'dot ' + state;
+        label.textContent = text;
+      }
+
+      function connect() {
+        if (ws) {
+          ws.onopen = ws.onclose = ws.onerror = ws.onmessage = null;
+          ws.close();
+        }
+        setStatus('connecting', 'Connecting…');
+        ws = new WebSocket(WS_URL);
+
+        ws.onopen = () => {
+          setStatus('connected', 'Connected');
+          addLog('Connected to bridge server', 'ok');
+        };
+
+        ws.onclose = () => {
+          setStatus('error', 'Disconnected — retrying in 3s');
+          addLog('Connection closed, retrying…', 'err');
+          reconnectTimer = setTimeout(connect, 3000);
+        };
+
+        ws.onerror = () => {
+          addLog('WebSocket error', 'err');
+        };
+
+        ws.onmessage = (event) => {
+          let msg;
+          try { msg = JSON.parse(event.data); } catch { return; }
+          addLog('← ' + msg.type + ' [' + msg.id.slice(0, 8) + ']');
+          // Relay to plugin code
+          parent.postMessage({ pluginMessage: msg }, '*');
+        };
+      }
+
+      // Receive response from plugin code.js and relay back over WebSocket
+      window.onmessage = (event) => {
+        const msg = event.data.pluginMessage;
+        if (!msg || !msg.id) return;
+        addLog('→ response [' + msg.id.slice(0, 8) + ']', 'ok');
+        if (ws && ws.readyState === WebSocket.OPEN) {
+          ws.send(JSON.stringify(msg));
+        }
+      };
+
+      connect();
+    </script>
+  </body>
+</html>
