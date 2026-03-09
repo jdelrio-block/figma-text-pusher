@@ -207,7 +207,7 @@ case "$HTTP_CODE" in
     exit 1
     ;;
   504)
-    echo "✗ Plugin timed out (10s). Is Figma open and responsive?"
+    echo "✗ Plugin timed out (30s). Is Figma open and responsive?"
     exit 1
     ;;
   200)

@@ -66,12 +66,23 @@ figma.ui.onmessage = async (msg) => {
 
     if (type === "update_text") {
       const updates = data;
+      const targetNames = new Set(Object.keys(updates));
       const results = [];
 
+      // Single traversal — collect only nodes whose names we care about
+      const matchedNodes = figma.currentPage.findAll(
+        (n) => n.type === "TEXT" && targetNames.has(n.name)
+      );
+
+      // Group by name
+      const byName = {};
+      for (const node of matchedNodes) {
+        if (!byName[node.name]) byName[node.name] = [];
+        byName[node.name].push(node);
+      }
+
       for (const [key, value] of Object.entries(updates)) {
-        const nodes = figma.currentPage
-          .findAllWithCriteria({ types: ["TEXT"] })
-          .filter((n) => n.name === key);
+        const nodes = byName[key] || [];
 
         if (nodes.length === 0) {
           results.push({ key, status: "not_found" });
@@ -80,19 +91,23 @@ figma.ui.onmessage = async (msg) => {
 
         for (const node of nodes) {
           try {
-            // Collect all font names used in this text node
+            // Use getStyledTextSegments for efficient font detection (avoids char-by-char loop)
             const fontNames = new Set();
             if (node.fontName !== figma.mixed) {
               fontNames.add(JSON.stringify(node.fontName));
             } else {
-              for (let i = 0; i < node.characters.length; i++) {
-                const fn = node.getRangeFontName(i, i + 1);
-                if (fn !== figma.mixed) fontNames.add(JSON.stringify(fn));
+              const segments = node.getStyledTextSegments(['fontName']);
+              for (const seg of segments) {
+                if (seg.fontName) fontNames.add(JSON.stringify(seg.fontName));
               }
             }
 
             for (const fnStr of fontNames) {
-              await figma.loadFontAsync(JSON.parse(fnStr));
+              try {
+                await figma.loadFontAsync(JSON.parse(fnStr));
+              } catch (_) {
+                // Font already loaded or unavailable — try to continue anyway
+              }
             }
 
             node.characters = value;
