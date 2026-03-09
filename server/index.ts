@@ -8,7 +8,7 @@ const RESPONSE_TIMEOUT_MS = 10_000;
 
 // Message protocol types
 interface ServerToPluginMessage {
-  type: "update_text" | "list_nodes" | "health_check";
+  type: "update_text" | "list_nodes" | "health_check" | "rename_nodes";
   id: string;
   data?: Record<string, string> | { frame?: string };
 }
@@ -155,6 +155,32 @@ const server = http.createServer((req, res) => {
       .then((body) => {
         const payload = body ? (JSON.parse(body) as { frame?: string }) : {};
         return sendToPlugin("list_nodes", payload);
+      })
+      .then((data) => {
+        res.writeHead(200);
+        res.end(JSON.stringify(data));
+      })
+      .catch((err: Error) => {
+        if (err.message === "NO_PLUGIN") {
+          res.writeHead(503);
+          res.end(JSON.stringify({ error: "no_plugin_connected" }));
+        } else if (err.message === "TIMEOUT") {
+          res.writeHead(504);
+          res.end(JSON.stringify({ error: "plugin_timeout" }));
+        } else {
+          res.writeHead(400);
+          res.end(JSON.stringify({ error: err.message }));
+        }
+      });
+    return;
+  }
+
+  // POST /rename
+  if (req.method === "POST" && url.pathname === "/rename") {
+    readBody(req)
+      .then((body) => {
+        const payload = JSON.parse(body) as Record<string, string>;
+        return sendToPlugin("rename_nodes", payload);
       })
       .then((data) => {
         res.writeHead(200);

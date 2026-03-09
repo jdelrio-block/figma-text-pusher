@@ -31,7 +31,36 @@ figma.ui.onmessage = async (msg) => {
         textNodes = figma.currentPage.findAllWithCriteria({ types: ["TEXT"] });
       }
 
-      respond(id, { nodes: textNodes.map((n) => n.name) });
+      respond(id, {
+        nodes: textNodes.map((n) => ({
+          name: n.name,
+          content: n.characters.slice(0, 80),
+        })),
+      });
+      return;
+    }
+
+    if (type === "rename_nodes") {
+      const mapping = data; // { "old_name": "new_name" }
+      const results = [];
+
+      for (const [oldName, newName] of Object.entries(mapping)) {
+        const nodes = figma.currentPage
+          .findAllWithCriteria({ types: ["TEXT"] })
+          .filter((n) => n.name === oldName);
+
+        if (nodes.length === 0) {
+          results.push({ oldName, newName, status: "not_found" });
+          continue;
+        }
+
+        for (const node of nodes) {
+          node.name = newName;
+          results.push({ oldName, newName, status: "renamed" });
+        }
+      }
+
+      respond(id, { results });
       return;
     }
 

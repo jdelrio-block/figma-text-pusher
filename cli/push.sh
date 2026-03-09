@@ -3,8 +3,9 @@
 # Usage:
 #   ./push.sh test-copy.json          Push text updates to Figma
 #   ./push.sh --health                Check server and plugin status
-#   ./push.sh --list                  List all text nodes
+#   ./push.sh --list                  List all text nodes with their content
 #   ./push.sh --list --frame "Name"   List text nodes in a specific frame
+#   ./push.sh --rename rename.json    Rename layers using a mapping file
 
 set -euo pipefail
 
@@ -21,6 +22,10 @@ while [[ $# -gt 0 ]]; do
       ;;
     --list)
       ACTION="list"
+      shift
+      ;;
+    --rename)
+      ACTION="rename"
       shift
       ;;
     --frame)
@@ -93,16 +98,79 @@ if not nodes:
     print('  (none found)')
 else:
     for n in nodes:
-        print('  •', n)
+        name    = n.get('name', '?') if isinstance(n, dict) else n
+        content = n.get('content', '') if isinstance(n, dict) else ''
+        content_preview = (content[:50] + '…') if len(content) > 50 else content
+        print(f'  • {name:<30}  \"{content_preview}\"')
 print()
 print(len(nodes), 'node(s) total')
 "
   exit 0
 fi
 
+# ── Rename layers ─────────────────────────────────────────────────────────────
+if [[ "$ACTION" == "rename" ]]; then
+  if [[ -z "${FILE:-}" ]]; then
+    echo "Usage: $0 --rename <mapping.json>" >&2
+    echo ""
+    echo "mapping.json format:"
+    echo '  { "old layer name": "new_layer_name", ... }'
+    exit 1
+  fi
+
+  if [[ ! -f "$FILE" ]]; then
+    echo "✗ File not found: $FILE" >&2
+    exit 1
+  fi
+
+  KEY_COUNT=$(python3 -c "import json; d=json.load(open('$FILE')); print(len(d))")
+  echo "Renaming $KEY_COUNT layer(s) in Figma…"
+  echo ""
+
+  HTTP_CODE=$(curl -s -o /tmp/figma_rename_response.json -w "%{http_code}" \
+    -X POST "$SERVER/rename" \
+    -H "Content-Type: application/json" \
+    -d "@$FILE" 2>/dev/null) || {
+    echo "✗ Could not reach bridge server at $SERVER" >&2
+    exit 1
+  }
+
+  case "$HTTP_CODE" in
+    503) echo "✗ No Figma plugin connected." >&2; exit 1 ;;
+    504) echo "✗ Plugin timed out." >&2; exit 1 ;;
+    200) ;;
+    *) echo "✗ Unexpected HTTP $HTTP_CODE" >&2; exit 1 ;;
+  esac
+
+  python3 << PYEOF
+import json
+with open('/tmp/figma_rename_response.json') as f:
+    data = json.load(f)
+
+results = data.get('results', [])
+renamed = 0
+not_found = 0
+
+for r in results:
+    old  = r.get('oldName', '?')
+    new  = r.get('newName', '?')
+    status = r.get('status', 'error')
+    if status == 'renamed':
+        print(f'  ✅ "{old}"  →  "{new}"')
+        renamed += 1
+    else:
+        print(f'  ✗  "{old}"  (not found)')
+        not_found += 1
+
+print()
+print(f'Done: {renamed} renamed, {not_found} not found')
+PYEOF
+  exit 0
+fi
+
 # ── Push text updates ─────────────────────────────────────────────────────────
 if [[ -z "${FILE:-}" ]]; then
-  echo "Usage: $0 <file.json> | --health | --list [--frame \"Name\"]" >&2
+  echo "Usage: $0 <file.json> | --health | --list [--frame \"Name\"] | --rename <mapping.json>" >&2
   exit 1
 fi
 
